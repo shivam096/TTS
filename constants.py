@@ -1,3 +1,1 @@
-
-
-DEFAULT_TOP_K = 5
+DEFAULT_TOP_K =5

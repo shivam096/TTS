@@ -2,7 +2,7 @@ import os
 
 
 from dotenv import load_dotenv
-# from constants import DEFAULT_TOP_K
+from constants import DEFAULT_TOP_K
 from llama_index.core import Settings
 from llama_index.embeddings.mistralai import MistralAIEmbedding
 from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex
@@ -39,12 +39,12 @@ class BaseEmbedding:
             self.documents, storage_context=self.storage_context
         )
 
-        self.retriever_engine = self.index.as_retriever(similarity_top_k=5)
+        self.retriever_engine = self.index.as_retriever(similarity_top_k=DEFAULT_TOP_K)
 
         return self.retriever_engine
     
 
-#Example code for testing
+# #Example code for testing
 # base_embedding = BaseEmbedding()
 # print(base_embedding.embed_text("Hello, how are you?"))
-# print(base_embedding.embed_directory("data"))
+# # print(base_embedding.embed_directory("data"))

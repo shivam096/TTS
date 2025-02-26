@@ -10,5 +10,3 @@ class Retriever:
             retrieved_text.append(res_node.text)
 
         return retrieved_text
-
-    
