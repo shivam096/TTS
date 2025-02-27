@@ -11,6 +11,7 @@ from llama_index.core import load_index_from_storage
 # Load the environment variables
 load_dotenv()
 
+
 class BaseEmbedding:
     def __init__(self, file_path: str):
         # Initialize embedding model
@@ -19,13 +20,13 @@ class BaseEmbedding:
         )
         # Initialize vector store
         self.vector_store = MilvusVectorStore(
-            uri="./milvus.db",
+            uri="./vector_store/milvus.db",
             collection_name="text_collection",
             overwrite=True,
             dim=1536,
         )
 
-        self.persist_dir = "./persisting_dir"
+        self.persist_dir = "./vector_store/persisting_dir"
 
         if not os.path.exists(self.persist_dir):
             # Set up storage context and load documents
@@ -35,19 +36,19 @@ class BaseEmbedding:
 
             self.documents = SimpleDirectoryReader(file_path).load_data()
 
-            self.index  = VectorStoreIndex.from_documents(
+            self.index = VectorStoreIndex.from_documents(
                 self.documents, storage_context=self.storage_context
             )
 
             self.index.storage_context.persist(persist_dir=self.persist_dir)
-        
+
         else:
-            self.index  = load_index_from_storage(
+            self.index = load_index_from_storage(
                 StorageContext.from_defaults(
                     persist_dir=self.persist_dir, vector_store=self.vector_store
                 )
-                )
-        
+            )
+
         # Create a retriever engine once during initialization
         self.retriever_engine = self.index.as_retriever(similarity_top_k=DEFAULT_TOP_K)
 

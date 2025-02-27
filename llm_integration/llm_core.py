@@ -3,20 +3,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI()
 
-def model_call(client, model= "o3-mini", query=None):
-    completion = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": f"{query}"
-            }
-        ]
-    )
-    return completion.choices[0].message.content
+class LLMCore:
+    def __init__(self):
+        self.client = OpenAI()
+
+    def model_call(self, query, model="o3-mini"):
+        completion = self.client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": f"{query}"}]
+        )
+        return completion.choices[0].message.content
 
 
-
-print(model_call(client, query="What is the capital of France?"))
+# Example usage:
+# llm = LLMCore()
+# response = llm.model_call(query="What is the capital of France?")
+# print(response)
