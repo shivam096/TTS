@@ -1,3 +1,4 @@
+import asyncio
 import os
 from dotenv import load_dotenv
 from constants import DEFAULT_TOP_K
@@ -12,12 +13,24 @@ from llama_index.core import load_index_from_storage
 load_dotenv()
 
 
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+
 class BaseEmbedding:
     def __init__(self, file_path: str):
         # Initialize embedding model
         self.embed_model = MistralAIEmbedding(
             "mistral-embed", api_key=os.getenv("MISTRAL_API_KEY")
         )
+
+        lock_file = "vector_store/.milvus.db.lock"
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+
         # Initialize vector store
         self.vector_store = MilvusVectorStore(
             uri="./vector_store/milvus.db",
