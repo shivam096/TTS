@@ -14,8 +14,3 @@ class LLMCore:
         )
         return completion.choices[0].message.content
 
-
-# Example usage:
-# llm = LLMCore()
-# response = llm.model_call(query="What is the capital of France?")
-# print(response)
