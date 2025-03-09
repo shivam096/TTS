@@ -1,10 +1,13 @@
 import json
+
+
 from pprint import pprint
 from utils.retriever import Retriever
 from utils.handler import load_metadata
 from db_utils.validator import Validator
 from utils.feedback import FeedbackHandler
 from prompts.general_SQL import GENERAL_SQL
+from prompts.text_to_sql import TEXT_TO_SQL
 from llm_integration.llm_core import LLMCore
 from db_utils.query_builder import QueryGenerator
 from llm_integration.embeddings import BaseEmbedding
@@ -50,17 +53,27 @@ def main():
                 print("Please enter a user query.")
                 continue
 
-            prompt = GENERAL_SQL.format(question=user_query)
 
-            response = llm.model_call(prompt,model=model_selection)
-
-            txt = retriever.retrieve(
-                retriever_engine=retriever_engine, query_str=user_query
+            # Get related tables with improved retrieval
+            related_tables, status_message = retriever.process_query(
+                retriever_engine=retriever_engine, user_query=user_query
             )
 
-            related_tables = ", ".join(txt)
+            # Check if there was an issue with the query
+            if status_message:
+                print(f"\n{status_message}")
+                continue
+            
+            if not related_tables:
+                prompt = GENERAL_SQL.format(question=user_query)
+            else:
+                prompt = TEXT_TO_SQL.format(question=user_query, table_schemas=related_tables)
 
-            print(f"\nRelated tables: {related_tables}")
+            # Printing formatted prompt
+            print("\nFormatted Prompt:")
+            print(prompt)
+
+            response = llm.model_call(prompt,model=model_selection)
 
             pprint(json.dumps(json.loads(response)))
 

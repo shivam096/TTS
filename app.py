@@ -203,6 +203,7 @@ def process_query(query, llm, retriever_engine, model_name):
         retriever_engine=retriever_engine, 
         query_str=query.strip()
     )
+    print(related_tables)
     
     # Add to conversation history with timestamp
     st.session_state.conversation_history.append({
@@ -459,49 +460,50 @@ def main():
                 display_schema_explorer(st.session_state.related_tables)
                     
         
-        # Feedback section when there's a result
-        if st.session_state.response_json and not st.session_state.feedback_submitted:
-            st.markdown("<h3 class='sub-header'> Feedback</h3>", unsafe_allow_html=True)
+        # # Feedback section when there's a result
+        # if st.session_state.response_json and not st.session_state.feedback_submitted:
+        #     st.markdown("<h3 class='sub-header'> Feedback</h3>", unsafe_allow_html=True)
             
-            # Quick feedback buttons
-            st.markdown("Was this SQL query helpful?")
-            col1, col2, col3 = st.columns([1, 1, 3])
-            with col1:
-                if st.button("👍 Yes", use_container_width=True):
-                    feedback_handler.record_feedback(
-                        user_query=st.session_state.user_query,
-                        sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-                        feedback=f"Positive: The SQL query was helpful. Model used: {st.session_state.selected_model}"
-                    )
-                    st.session_state.feedback_submitted = True
-                    st.success("Thanks for your feedback!")
+        #     # Quick feedback buttons
+        #     st.markdown("Was this SQL query helpful?")
+        #     col1, col2, col3 = st.columns([1, 1, 3])
+        #     with col1:
+        #         if st.button("👍 Yes", use_container_width=True):
+        #             feedback_handler.record_feedback(
+        #                 user_query=st.session_state.user_query,
+        #                 sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
+        #                 feedback=f"Positive: The SQL query was helpful. Model used: {st.session_state.selected_model}"
+        #             )
+        #             st.session_state.feedback_submitted = True
+        #             st.success("Thanks for your feedback!")
             
-            with col2:
-                if st.button("👎 No", use_container_width=True):
-                    st.session_state.feedback_negative = True
+        #     with col2:
+        #         if st.button("👎 No", use_container_width=True):
+        #             st.session_state.feedback_negative = True
             
-            # Detailed feedback form appears if negative feedback given
-            if "feedback_negative" in st.session_state and st.session_state.feedback_negative:
-                feedback = st.text_area("Please tell us what could be improved:", height=80, key="feedback_text")
-                if st.button("Submit Detailed Feedback"):
-                    if feedback.strip():
-                        feedback_handler.record_feedback(
-                            user_query=st.session_state.user_query,
-                            sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-                            feedback=f"Negative: {feedback}. Model used: {st.session_state.selected_model}"
-                        )
-                        st.session_state.feedback_submitted = True
-                        st.session_state.feedback_negative = False
-                        st.success("Thanks for your detailed feedback! We'll use it to improve.")
-                        st.session_state.feedback_text = ""
-                    else:
-                        st.warning("Please provide some feedback details.")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
+        #     # Detailed feedback form appears if negative feedback given
+        #     if "feedback_negative" in st.session_state and st.session_state.feedback_negative:
+        #         feedback_key = f"feedback_text_{int(time.time())}"  # Use a unique key with timestamp
+        #         feedback = st.text_area("Please tell us what could be improved:", height=80, key=feedback_key)
+                
+        #         if st.button("Submit Detailed Feedback"):
+        #             if feedback.strip():
+        #                 feedback_handler.record_feedback(
+        #                     user_query=st.session_state.user_query,
+        #                     sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
+        #                     feedback=f"Negative: {feedback}. Model used: {st.session_state.selected_model}"
+        #                 )
+        #                 st.session_state.feedback_submitted = True
+        #                 st.session_state.feedback_negative = False
+        #                 st.success("Thanks for your detailed feedback! We'll use it to improve.")
+        #                 # Don't try to clear the text area directly
+        #             else:
+        #                 st.warning("Please provide some feedback details.")
+        #                 st.markdown("</div>", unsafe_allow_html=True)
     
     # Conversation history display
     if st.session_state.conversation_history and not st.session_state.show_welcome:
-        st.markdown("<h3 class='sub-header'>📜 Conversation History</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 class='sub-header'>Conversation History</h3>", unsafe_allow_html=True)
         
         # Display in reverse order with most recent at top, with the option to toggle
         display_order = st.radio("Display order:", ["Most recent first", "Oldest first"], horizontal=True)
