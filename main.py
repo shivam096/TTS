@@ -22,7 +22,15 @@ def main():
 
     print("Welcome to the Text-to-SQL chatbot!")
     print("Type 'exit' to quit, 'help' for example questions.\n")
-
+    
+    while True:
+        model_selection = input("Select a model (o3-mini, codestral-latest): ").strip()
+        
+        if model_selection in ["o3-mini", "codestral-latest"]:
+            break
+        else:
+            print("Invalid model selection. Please try again.")
+    
     while True:
         try:
             user_query = input("Enter your query : ").strip()
@@ -44,13 +52,15 @@ def main():
 
             prompt = GENERAL_SQL.format(question=user_query)
 
-            response = llm.model_call(prompt)
+            response = llm.model_call(prompt,model=model_selection)
 
             txt = retriever.retrieve(
                 retriever_engine=retriever_engine, query_str=user_query
             )
 
             related_tables = ", ".join(txt)
+
+            print(f"\nRelated tables: {related_tables}")
 
             pprint(json.dumps(json.loads(response)))
 

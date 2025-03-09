@@ -1,5 +1,6 @@
 class Retriever:
     def retrieve(self, retriever_engine, query_str):
+        
         retrieval_results = retriever_engine.retrieve(query_str)
 
         retrieved_text = []

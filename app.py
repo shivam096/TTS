@@ -121,6 +121,13 @@ st.markdown("""
     .stTextArea>div>div>textarea {
         border-radius: 0.375rem;
     }
+    .model-selector {
+        background-color: #EFF6FF;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid #DBEAFE;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -156,6 +163,8 @@ def initialize_session_state():
         st.session_state.show_welcome = True
     if "feedback_submitted" not in st.session_state:
         st.session_state.feedback_submitted = False
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = "o3-mini"
 
 def update_query():
     """Update session state from the text input"""
@@ -175,13 +184,14 @@ def clear_history():
     # clear_inputs()
     # st.session_state.show_welcome = True
     
-def process_query(query, llm, retriever_engine):
+def process_query(query, llm, retriever_engine, model_name):
     """Process a user query and return results"""
     if not query.strip():
         return None, None
     
     prompt = GENERAL_SQL.format(question=query.strip())
-    response = llm.model_call(prompt)
+    print(prompt)
+    response = llm.model_call(prompt, model=model_name)
     
     try:
         response_json = json.loads(response)
@@ -199,7 +209,8 @@ def process_query(query, llm, retriever_engine):
         "query": query,
         "response": response_json,
         "tables": related_tables,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model": model_name
     })
     
     return response_json, related_tables
@@ -218,6 +229,8 @@ def display_welcome_screen():
     st.markdown("""
     <div class="card">
         <h2 style="color: #2563EB; margin-bottom: 1rem;">👋 Welcome to the Text-to-SQL Assistant!</h2>
+        <p>Ask questions in natural language, and I'll generate SQL queries for you.</p>
+        <p>Start by selecting an AI model below and typing your query.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -230,12 +243,17 @@ def display_conversation_message(exchange, index):
             <div class="avatar">U</div>
             <div class="message-content">
                 <strong>Your Query:</strong>
+                <div class="timestamp">{exchange.get('timestamp', '')}</div>
             </div>
         </div>
     """, unsafe_allow_html=True)
     
     # Display the actual query text in a highlight box using Streamlit's components
     st.write(exchange['query'])
+    
+    # Model used for this query
+    if 'model' in exchange:
+        st.markdown(f"<span class='tag'>Model: {exchange['model']}</span>", unsafe_allow_html=True)
     
     # Assistant response header
     st.markdown(f"""
@@ -248,7 +266,7 @@ def display_conversation_message(exchange, index):
     """, unsafe_allow_html=True)
     
     # Display SQL or explanation
-    if isinstance(exchange['response'], dict) and  exchange['response'].get('query', '')!="FALSE":
+    if isinstance(exchange['response'], dict) and exchange['response'].get('query', '')!="FALSE":
         sql_query = exchange['response'].get('query', '')
         st.code(sql_query, language="sql")
     else:
@@ -356,8 +374,20 @@ def main():
     
     # Query input section
     with query_col:
-
         st.markdown("<h3 class='sub-header'>Enter your Query</h3>", unsafe_allow_html=True)
+        
+        # Model selection using radio buttons
+        st.markdown("<div class='model-selector'>", unsafe_allow_html=True)
+        st.markdown("**Select AI Model:**", unsafe_allow_html=True)
+        model_option = st.radio(
+            "Choose a model for SQL generation:",
+            options=["o3-mini", "codestral-latest"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="model_selection"
+        )
+        st.session_state.selected_model = model_option
+        st.markdown("</div>", unsafe_allow_html=True)
         
         st.text_area(
             "Type your question in natural language:", 
@@ -390,9 +420,9 @@ def main():
     
     # Handle submit action
     if submit_pressed and st.session_state.user_query.strip():
-        with st.spinner("Analyzing your query and generating SQL..."):
+        with st.spinner(f"Analyzing your query with {st.session_state.selected_model} and generating SQL..."):
             response_json, related_tables = process_query(
-                st.session_state.user_query, llm, retriever_engine
+                st.session_state.user_query, llm, retriever_engine, st.session_state.selected_model
             )
             
             # Update session state with results
@@ -405,6 +435,9 @@ def main():
         # Display most recent response if available
         if st.session_state.response_json:
             st.markdown("<h3 class='sub-header'>Results</h3>", unsafe_allow_html=True)
+            
+            # Show which model was used
+            st.markdown(f"<span class='tag'>Generated with: {st.session_state.selected_model}</span>", unsafe_allow_html=True)
             
             if isinstance(st.session_state.response_json, dict):
                 query = st.session_state.response_json.get('query')
@@ -438,7 +471,7 @@ def main():
                     feedback_handler.record_feedback(
                         user_query=st.session_state.user_query,
                         sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-                        feedback="Positive: The SQL query was helpful."
+                        feedback=f"Positive: The SQL query was helpful. Model used: {st.session_state.selected_model}"
                     )
                     st.session_state.feedback_submitted = True
                     st.success("Thanks for your feedback!")
@@ -455,7 +488,7 @@ def main():
                         feedback_handler.record_feedback(
                             user_query=st.session_state.user_query,
                             sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-                            feedback=f"Negative: {feedback}"
+                            feedback=f"Negative: {feedback}. Model used: {st.session_state.selected_model}"
                         )
                         st.session_state.feedback_submitted = True
                         st.session_state.feedback_negative = False
