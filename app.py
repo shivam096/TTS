@@ -3,12 +3,14 @@ import json
 from utils.retriever import Retriever
 from utils.feedback import FeedbackHandler
 from prompts.general_SQL import GENERAL_SQL
+from prompts.text_to_sql import TEXT_TO_SQL
 from llm_integration.llm_core import LLMCore
 from db_utils.query_builder import QueryGenerator
 from llm_integration.embeddings import BaseEmbedding
 import streamlit.components.v1 as components
 import time
 from datetime import datetime
+from chatbot.SQLChatbot import SQLChatbot
 
 # Set page configuration
 st.set_page_config(
@@ -128,24 +130,18 @@ st.markdown("""
         margin-bottom: 1.5rem;
         border: 1px solid #DBEAFE;
     }
+    .loading-schema {
+        background-color: #FEF3C7;
+        border-left: 3px solid #F59E0B;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 @st.cache_resource
-def get_base_embedding():
-    return BaseEmbedding(file_path="meta_data")
-
-@st.cache_resource
-def get_llm():
-    return LLMCore()
-
-@st.cache_resource
-def get_retriever():
-    return Retriever()
-
-@st.cache_resource
-def get_feedback_handler():
-    return FeedbackHandler()
+def get_sql_chatbot():
+    return SQLChatbot()
 
 def initialize_session_state():
     """Initialize session state variables if they don't exist"""
@@ -164,7 +160,13 @@ def initialize_session_state():
     if "feedback_submitted" not in st.session_state:
         st.session_state.feedback_submitted = False
     if "selected_model" not in st.session_state:
-        st.session_state.selected_model = "o3-mini"
+        st.session_state.selected_model = "openai"
+    if "schema_analyzing" not in st.session_state:
+        st.session_state.schema_analyzing = False
+    if "real_time_schema" not in st.session_state:
+        st.session_state.real_time_schema = None
+    if "last_analyzed_query" not in st.session_state:
+        st.session_state.last_analyzed_query = ""
 
 def update_query():
     """Update session state from the text input"""
@@ -177,33 +179,54 @@ def clear_inputs():
     st.session_state.user_query = ""
     st.session_state.response_json = None
     st.session_state.related_tables = None
+    st.session_state.schema_analyzing = False
+    st.session_state.real_time_schema = None
+    st.session_state.last_analyzed_query = ""
 
 def clear_history():
     """Clear the conversation history"""
     st.session_state.conversation_history = []
-    # clear_inputs()
-    # st.session_state.show_welcome = True
     
-def process_query(query, llm, retriever_engine, model_name):
-    """Process a user query and return results"""
+def fetch_schema_for_query(query, chatbot):
+    """Fetch schema information for a query without generating the SQL yet"""
+    if not query.strip():
+        return None, "No query provided"
+    
+    # Get the model from session state
+    model_name = st.session_state.selected_model
+    chatbot.selected_model = model_name
+    
+    # Get related tables using the chatbot's retriever
+    related_tables, status_message = chatbot.process_query(query.strip())
+    
+    return related_tables, status_message
+
+def process_query(query, chatbot, schema_already_fetched=False):
+    """Process a user query and return results using SQLChatbot"""
     if not query.strip():
         return None, None
     
-    prompt = GENERAL_SQL.format(question=query.strip())
-    print(prompt)
-    response = llm.model_call(prompt, model=model_name)
+    # Get the model from session state
+    model_name = st.session_state.selected_model
+    chatbot.selected_model = model_name
+    
+    # Get related tables using the chatbot's retriever if not already fetched
+    if schema_already_fetched and st.session_state.real_time_schema:
+        related_tables = st.session_state.real_time_schema
+        status_message = "Schema already analyzed"
+    else:
+        related_tables, status_message = chatbot.process_query(query.strip())
+    
+    # Generate the appropriate prompt based on the tables
+    prompt = chatbot.generate_prompt(query.strip(), related_tables)
+    
+    # Get response from the LLM
+    response = chatbot.llm.model_call(prompt, model=model_name)
     
     try:
         response_json = json.loads(response)
     except json.JSONDecodeError:
-        response_json = {"explanation": response}
-    
-    # Retrieve related tables
-    related_tables = get_retriever().retrieve(
-        retriever_engine=retriever_engine, 
-        query_str=query.strip()
-    )
-    print(related_tables)
+        response_json = {"explanation": response, "query": "FALSE"}
     
     # Add to conversation history with timestamp
     st.session_state.conversation_history.append({
@@ -211,7 +234,8 @@ def process_query(query, llm, retriever_engine, model_name):
         "response": response_json,
         "tables": related_tables,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "model": model_name
+        "model": model_name,
+        "status": status_message
     })
     
     return response_json, related_tables
@@ -256,6 +280,10 @@ def display_conversation_message(exchange, index):
     if 'model' in exchange:
         st.markdown(f"<span class='tag'>Model: {exchange['model']}</span>", unsafe_allow_html=True)
     
+    # Display status message if available
+    if 'status' in exchange and exchange['status']:
+        st.info(exchange['status'])
+    
     # Assistant response header
     st.markdown(f"""
         <div class="message-container">
@@ -267,7 +295,7 @@ def display_conversation_message(exchange, index):
     """, unsafe_allow_html=True)
     
     # Display SQL or explanation
-    if isinstance(exchange['response'], dict) and exchange['response'].get('query', '')!="FALSE":
+    if isinstance(exchange['response'], dict) and exchange['response'].get('query', '') != "FALSE":
         sql_query = exchange['response'].get('query', '')
         st.code(sql_query, language="sql")
     else:
@@ -283,20 +311,28 @@ def display_conversation_message(exchange, index):
                     st.json(table)
                 else:
                     st.write(table)
-    
-    # Close the card container
-    st.markdown("</div>", unsafe_allow_html=True)
 
-def display_schema_explorer(tables):
+def display_schema_explorer(tables, is_loading=False):
     """Display a visual explorer for database schema"""
-    if not tables:
+    if not tables and not is_loading:
         st.info("No schema information available yet. Submit a query to explore related tables.")
+        return
+    
+    if is_loading:
+        st.info("🔍 Analyzing query and identifying relevant tables...")
         return
         
     st.markdown("<h3 class='sub-header'>Database Schema Explorer</h3>", unsafe_allow_html=True)
     
     for i, table in enumerate(tables):
-        with st.expander(f"📊 {table.get('table_name', f'Table {i+1}')}"):
+        # Check if table is a dictionary or a string
+        if isinstance(table, dict):
+            table_name = table.get('table_name', f'Table {i+1}')
+        else:
+            # If it's a string or other type, use it directly or provide a default
+            table_name = str(table) if table else f'Table {i+1}'
+            
+        with st.expander(f"📊 {table_name}", expanded=True):  # Auto-expand for better visibility
             if isinstance(table, dict):
                 if 'columns' in table:
                     cols = st.columns([1, 2, 1])
@@ -319,11 +355,8 @@ def display_schema_explorer(tables):
                 st.write(table)
 
 def main():
-    # Initialize resources
-    llm = get_llm()
-    base_embedding = get_base_embedding()
-    retriever_engine = base_embedding.get_retriever_engine()
-    feedback_handler = get_feedback_handler()
+    # Initialize SQL chatbot
+    chatbot = get_sql_chatbot()
     
     # Initialize session state
     initialize_session_state()
@@ -336,21 +369,7 @@ def main():
         # Configuration options
         show_raw_json = st.checkbox("Show Raw JSON", value=False)
         compact_view = st.checkbox("Compact View", value=False)
-        
-        # # Examples section
-        # st.markdown("### Example Queries")
-        # example_queries = [
-        #     "List all customers who spent more than $1000 last month",
-        #     "Find the top 5 products by revenue",
-        #     "Show employees who haven't taken vacation in 2025",
-        #     "Calculate average order value by region"
-        # ]
-        
-        # for ex in example_queries:
-        #     if st.button(ex, key=f"example_{ex}"):
-        #         st.session_state.query_text = ex
-        #         st.session_state.user_query = ex
-        #         st.session_state.show_welcome = False
+        real_time_schema = st.checkbox("Real-time Schema Analysis", value=True, help="Show schema as you type your query")
         
         # History management
         st.markdown("### History")
@@ -382,7 +401,7 @@ def main():
         st.markdown("**Select AI Model:**", unsafe_allow_html=True)
         model_option = st.radio(
             "Choose a model for SQL generation:",
-            options=["o3-mini", "codestral-latest"],
+            options=["openai", "mistralai"],
             horizontal=True,
             label_visibility="collapsed",
             key="model_selection"
@@ -390,17 +409,18 @@ def main():
         st.session_state.selected_model = model_option
         st.markdown("</div>", unsafe_allow_html=True)
         
-        st.text_area(
+        # Query text area
+        query_input = st.text_area(
             "Type your question in natural language:", 
             key="query_text", 
             height=100,
-            placeholder="e.g., Show all customers who made purchases last month",
-            on_change=update_query
+            placeholder="e.g., Show all customers who made purchases last month"
         )
         
+        # Buttons for actions
         col1, col2, col3 = st.columns([1, 1, 1])
         with col1:
-            submit_pressed = st.button("Generate SQL", type="primary", use_container_width=True)
+            submit_pressed = st.button("Generate SQL", type="primary", use_container_width=True, on_click=update_query)
         with col2:
             clear_pressed = st.button("Clear", on_click=clear_inputs, use_container_width=True)
         with col3:
@@ -413,8 +433,44 @@ def main():
                     use_container_width=True
                 )
         
-        # Schema explorer (visible in non-compact mode)
-        if not compact_view and st.session_state.related_tables:
+        # Real-time schema analysis area
+        if real_time_schema:
+            schema_area = st.container()
+            
+            # Only analyze if query has changed and has sufficient content
+            current_query = query_input.strip()
+            if (current_query and len(current_query) > 10 and 
+                current_query != st.session_state.last_analyzed_query):
+                
+                with schema_area:
+                    # Show loading state
+                    with st.spinner("Analyzing schema..."):
+                        st.session_state.schema_analyzing = True
+                        display_schema_explorer(None, is_loading=True)
+                        
+                        # Fetch schema information
+                        try:
+                            # Update the last analyzed query
+                            st.session_state.last_analyzed_query = current_query
+                            tables, _ = fetch_schema_for_query(current_query, chatbot)
+                            st.session_state.real_time_schema = tables
+                            st.session_state.schema_analyzing = False
+                            
+                            # Clear the area and show the schema
+                            schema_area.empty()
+                            if tables:
+                                with schema_area:
+                                    display_schema_explorer(tables)
+                        except Exception as e:
+                            schema_area.error(f"Error analyzing schema: {str(e)}")
+                            st.session_state.schema_analyzing = False
+            elif st.session_state.real_time_schema and not st.session_state.schema_analyzing:
+                # Display previously analyzed schema if available
+                with schema_area:
+                    display_schema_explorer(st.session_state.real_time_schema)
+        
+        # Show schema explorer for non-compact view and no real-time schema
+        elif not compact_view and st.session_state.related_tables:
             display_schema_explorer(st.session_state.related_tables)
             
         st.markdown("</div>", unsafe_allow_html=True)
@@ -422,8 +478,11 @@ def main():
     # Handle submit action
     if submit_pressed and st.session_state.user_query.strip():
         with st.spinner(f"Analyzing your query with {st.session_state.selected_model} and generating SQL..."):
+            # If real-time schema is enabled, use the already fetched schema
+            schema_already_fetched = real_time_schema and st.session_state.real_time_schema is not None
+            
             response_json, related_tables = process_query(
-                st.session_state.user_query, llm, retriever_engine, st.session_state.selected_model
+                st.session_state.user_query, chatbot, schema_already_fetched=schema_already_fetched
             )
             
             # Update session state with results
@@ -443,7 +502,7 @@ def main():
             if isinstance(st.session_state.response_json, dict):
                 query = st.session_state.response_json.get('query')
                 # Handle explicit False from LLM or empty queries
-                if query and query !="FALSE":
+                if query and query != "FALSE":
                     sql_query = st.session_state.response_json.get('query', '')
                     st.code(sql_query, language="sql")
                 else:
@@ -455,51 +514,9 @@ def main():
                 with st.expander("Raw Response Data"):
                     st.json(st.session_state.response_json)
             
-            # Schema explorer (in compact mode)
-            if compact_view and st.session_state.related_tables:
+            # Schema explorer (in compact mode) - only show if not already shown by real-time analysis
+            if compact_view and st.session_state.related_tables and not real_time_schema:
                 display_schema_explorer(st.session_state.related_tables)
-                    
-        
-        # # Feedback section when there's a result
-        # if st.session_state.response_json and not st.session_state.feedback_submitted:
-        #     st.markdown("<h3 class='sub-header'> Feedback</h3>", unsafe_allow_html=True)
-            
-        #     # Quick feedback buttons
-        #     st.markdown("Was this SQL query helpful?")
-        #     col1, col2, col3 = st.columns([1, 1, 3])
-        #     with col1:
-        #         if st.button("👍 Yes", use_container_width=True):
-        #             feedback_handler.record_feedback(
-        #                 user_query=st.session_state.user_query,
-        #                 sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-        #                 feedback=f"Positive: The SQL query was helpful. Model used: {st.session_state.selected_model}"
-        #             )
-        #             st.session_state.feedback_submitted = True
-        #             st.success("Thanks for your feedback!")
-            
-        #     with col2:
-        #         if st.button("👎 No", use_container_width=True):
-        #             st.session_state.feedback_negative = True
-            
-        #     # Detailed feedback form appears if negative feedback given
-        #     if "feedback_negative" in st.session_state and st.session_state.feedback_negative:
-        #         feedback_key = f"feedback_text_{int(time.time())}"  # Use a unique key with timestamp
-        #         feedback = st.text_area("Please tell us what could be improved:", height=80, key=feedback_key)
-                
-        #         if st.button("Submit Detailed Feedback"):
-        #             if feedback.strip():
-        #                 feedback_handler.record_feedback(
-        #                     user_query=st.session_state.user_query,
-        #                     sql_queries=st.session_state.response_json.get('query', '') if st.session_state.response_json else '',
-        #                     feedback=f"Negative: {feedback}. Model used: {st.session_state.selected_model}"
-        #                 )
-        #                 st.session_state.feedback_submitted = True
-        #                 st.session_state.feedback_negative = False
-        #                 st.success("Thanks for your detailed feedback! We'll use it to improve.")
-        #                 # Don't try to clear the text area directly
-        #             else:
-        #                 st.warning("Please provide some feedback details.")
-        #                 st.markdown("</div>", unsafe_allow_html=True)
     
     # Conversation history display
     if st.session_state.conversation_history and not st.session_state.show_welcome:

@@ -13,15 +13,20 @@ from llama_index.core import load_index_from_storage
 load_dotenv()
 
 
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+# try:
+#     asyncio.get_event_loop()
+# except RuntimeError:
+#     asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 class BaseEmbedding:
     def __init__(self, file_path: str):
         # Initialize embedding model
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
         self.embed_model = MistralAIEmbedding(
             "mistral-embed", api_key=os.getenv("MISTRAL_API_KEY")
         )
